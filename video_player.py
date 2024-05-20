@@ -1,7 +1,5 @@
 """Модуль с описанием класса видео-плеера и его методов."""
 
-import logging
-import os
 from typing import List
 
 import cv2
@@ -26,7 +24,7 @@ class VideoPlayer:
         num_frame (int): номер кадра, первоначально равен 0.
         current_timestamp (float): текущая временная метка.
         frame_counte (int): счетчик кадров.
-        previous_frame: сохраненный предыдущий кадр.
+        previous_frame (Optional[np.ndarray]): сохраненный предыдущий кадр.
         use_old_frame (bool): флаг, указывающий на использование старого кадра.
     """
 
@@ -51,14 +49,11 @@ class VideoPlayer:
         self.timer = QTimer()
         self.cap = cv2.VideoCapture(self.video_path)
         self.num_frame = 0
-        self.current_timestamp = self.annotations[self.num_frame]
+        self.current_timestamp = (self.annotations[self.num_frame]
+                                  if self.annotations else 0)
         self.frame_counter = 0
-
         self.previous_frame = None
         self.use_old_frame = False
-
-        logging.basicConfig(filename='video_player.log', level=logging.INFO,
-                            format='%(asctime)s - %(levelname)s - %(message)s')
 
         try:
             self.check_videofile()
@@ -72,43 +67,32 @@ class VideoPlayer:
         ret, frame = self.cap.read()
         if ret:
             self.previous_frame = frame.copy()
-            if self.use_old_frame:
-                frame = self.add_old_frame_label(frame)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = frame.shape
-            bytes_per_line = ch * w
-            convert_to_qt_format = QImage(
-                frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            p = convert_to_qt_format.scaled(
-                self.label.width(), self.label.height(), Qt.KeepAspectRatio
-            )
-            self.label.setPixmap(QPixmap.fromImage(p))
+            self.process_and_display_frame(frame)
             self.frame_counter += 1
-
-            # Логгирование информации о кадре
-            video_name = os.path.basename(self.video_path)
-            logging.info(f"Video: {video_name}, Frame: {self.num_frame}, "
-                         f"Timestamp: {self.current_timestamp}")
-
             self.get_next_frame()
         else:
             if self.previous_frame is not None:
                 frame = self.previous_frame.copy()
-                frame = self.add_old_frame_label(frame)
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = frame.shape
-                bytes_per_line = ch * w
-                convert_to_qt_format = QImage(frame.data, w, h, bytes_per_line,
-                                              QImage.Format_RGB888)
-                p = convert_to_qt_format.scaled(
-                    self.label.width(), self.label.height(), Qt.KeepAspectRatio
-                )
-                self.label.setPixmap(QPixmap.fromImage(p))
+                self.process_and_display_frame(frame)
 
             QMessageBox.warning(None, "Предупреждение",
                                 (f"Не удалось прочитать кадр {self.num_frame}."
                                  " Пропускаем кадр."))
             self.get_next_frame()
+
+    def process_and_display_frame(self, frame):
+        """Обработка и отображение кадра."""
+        if self.use_old_frame:
+            frame = self.add_old_frame_label(frame)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = frame.shape
+        bytes_per_line = ch * w
+        convert_to_qt_format = QImage(
+            frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        p = convert_to_qt_format.scaled(
+            self.label.width(), self.label.height(), Qt.KeepAspectRatio
+        )
+        self.label.setPixmap(QPixmap.fromImage(p))
 
     def add_old_frame_label(self, frame):
         """Добавляет метку на кадр, чтобы указать, что кадр старый."""
@@ -153,8 +137,10 @@ class VideoPlayer:
 
     def check_annotations(self) -> None:
         """Проверка наличия аннотаций и их соответствия видео."""
-        if (len(self.annotations) == 0 or len(self.annotations) != int(
-                self.cap.get(cv2.CAP_PROP_FRAME_COUNT))):
+        if not self.annotations:
+            raise ValueError("Аннотации отсутствуют.")
+        if len(self.annotations) != int(self.cap.get(
+                cv2.CAP_PROP_FRAME_COUNT)):
             raise ValueError(
                 "Количество аннотаций не соответствует количеству кадров.")
 
@@ -175,5 +161,6 @@ class VideoPlayer:
 
     def close(self) -> None:
         """Закрыть видеопоток."""
+        self.stop_playing()
         if self.cap is not None:
             self.cap.release()
